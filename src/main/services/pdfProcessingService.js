@@ -113,6 +113,65 @@ function applyFixedPanImageSelection(imagePaths, result, imageObject) {
   }
 }
 
+function applyLicenseImageSelection(imagePaths, result, imageObject) {
+  if (!Array.isArray(imagePaths) || imagePaths.length === 0) return
+
+  const cardImagePath = imagePaths[6] || null
+  const qrImagePath = imagePaths[7] || null
+  const faceImagePath = imagePaths[8] || null
+  const signatureImagePath = imagePaths[9] || imagePaths[2] || null
+
+  if (cardImagePath) {
+    result.structured.cardImagePath = cardImagePath
+    imageObject.cardImage = cardImagePath
+  }
+
+  if (qrImagePath) {
+    imageObject.qrImage = qrImagePath
+    result.structured.qrDetected = qrImagePath
+  }
+
+  if (faceImagePath) {
+    imageObject.faceImage = faceImagePath
+    result.structured.faceDetected = faceImagePath
+  }
+
+  if (signatureImagePath) {
+    imageObject.signatureImage = signatureImagePath
+    result.structured.signatureDetected = signatureImagePath
+  }
+
+  result.structured.drivingLicenceFixedImageSelection = {
+    cardSourceIndex: cardImagePath ? 7 : null,
+    cardImagePath,
+    qrSourceIndex: qrImagePath ? 8 : null,
+    qrImagePath,
+    faceSourceIndex: faceImagePath ? 9 : null,
+    faceImagePath,
+    signatureSourceIndex: signatureImagePath === imagePaths[9] ? 10 : signatureImagePath ? 3 : null,
+    signatureImagePath,
+    availableImageCount: imagePaths.length
+  }
+
+  if (cardImagePath) {
+    console.log('   ✓ License fixed card image mapped from image 7')
+  }
+
+  if (qrImagePath) {
+    console.log('   ✓ License fixed QR image mapped from image 8')
+  }
+
+  if (faceImagePath) {
+    console.log('   ✓ License fixed face image mapped from image 9')
+  }
+
+  if (signatureImagePath === imagePaths[9]) {
+    console.log('   ✓ License fixed signature image mapped from image 10')
+  } else if (signatureImagePath === imagePaths[2]) {
+    console.log('   ✓ License fixed signature image mapped from image 3')
+  }
+}
+
 /* ======================================================
    DOCUMENT CONFIG - Single Source of Truth
    ====================================================== */
@@ -407,6 +466,10 @@ async function handleTextBasedPDF(jobData, config) {
 
   if (documentType === 'PAN') {
     applyFixedPanImageSelection(imagePaths, result, imageObject)
+  }
+
+  if (documentType === 'DRIVING_LICENCE') {
+    applyLicenseImageSelection(imagePaths, result, imageObject)
   }
 
   console.log('\n💾 Saving to Database...');
