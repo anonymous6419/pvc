@@ -23,8 +23,35 @@ export function parseABHAText(text) {
 
     if (!text) return result;
 
+    const devanagariDigitMap = {
+        '०': '0', '१': '1', '२': '2', '३': '3', '४': '4',
+        '५': '5', '६': '6', '७': '7', '८': '8', '९': '9'
+    };
+
+    const normalizeDigits = (value) => value
+        .replace(/[०-९]/g, (digit) => devanagariDigitMap[digit] || digit);
+
+    const normalizeOcrNumber = (value) => normalizeDigits(value)
+        .replace(/[Oo]/g, '0')
+        .replace(/[Il|]/g, '1')
+        .replace(/S/g, '5')
+        .replace(/B/g, '8');
+
+    const collectNumericCandidates = (value) => {
+        const candidates = [];
+        const matches = value.match(/[0-9OIlSBo०-९][0-9OIlSBo०-९\s:-]{12,30}/g) || [];
+        for (const raw of matches) {
+            const normalized = normalizeOcrNumber(raw).replace(/\D/g, '');
+            if (normalized.length >= 14) {
+                candidates.push(normalized.slice(0, 14));
+            }
+        }
+        return candidates;
+    };
+
     // Clean text - normalize line breaks and spaces
     const cleanText = text.replace(/[\r\n]+/g, '\n').replace(/\s+/g, ' ').trim();
+    const cleanTextNormalizedDigits = normalizeDigits(cleanText);
     
     // Also keep original with line breaks for line-by-line matching
     const originalLines = text.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
@@ -35,7 +62,7 @@ export function parseABHAText(text) {
         // Try line-by-line approach
         for (const line of originalLines) {
             if (/(?:Name|नाम|NAME)/i.test(line)) {
-                const match = line.match(/(?:Name|नाम|NAME)\s*[:：]?\s*([A-Za-z][A-Za-z\s]+)/i);
+                const match = line.match(/(?:Name|नाम|NAME)\s*[:：]?\s*([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F\s]+)/i);
                 if (match) {
                     nameMatch = match;
                     break;
@@ -58,6 +85,12 @@ export function parseABHAText(text) {
                 nameMatch = namePattern;
                 break;
             }
+
+            const hindiNamePattern = line.match(/^([\u0900-\u097F]{2,}(?:\s+[\u0900-\u097F]{2,}){1,3})/);
+            if (hindiNamePattern && hindiNamePattern[1].length > 3) {
+                nameMatch = hindiNamePattern;
+                break;
+            }
         }
     }
     if (nameMatch) {
@@ -69,18 +102,18 @@ export function parseABHAText(text) {
 
     // Extract ABHA Number - More flexible patterns
     // Try with explicit label first
-    let abhaNumberMatch = cleanText.match(/(?:ABHA\s*(?:Number|No\.?|Card\s*Number)|आभा\s*(?:नंबर|संख्या))\s*[:：]?\s*([0-9\s-]{12,20})/i);
+    let abhaNumberMatch = cleanTextNormalizedDigits.match(/(?:ABHA\s*(?:Number|No\.?|Card\s*Number)|आभा\s*(?:नंबर|संख्या))\s*[:：]?\s*([0-9OIlSBo\s-]{12,24})/i);
     if (!abhaNumberMatch) {
         // Try standalone 14-digit pattern (not phone number)
-        abhaNumberMatch = cleanText.match(/(?:^|\s)([0-9]{2}[\s-]?[0-9]{4}[\s-]?[0-9]{4}[\s-]?[0-9]{4})(?:\s|$)/);
+        abhaNumberMatch = cleanTextNormalizedDigits.match(/(?:^|\s)([0-9OIlSBo]{2}[\s-:]?[0-9OIlSBo]{4}[\s-:]?[0-9OIlSBo]{4}[\s-:]?[0-9OIlSBo]{4})(?:\s|$)/);
     }
     if (!abhaNumberMatch) {
         // Try line-by-line
         for (const line of originalLines) {
             if (/(?:ABHA|आभा|Health\s*ID)/i.test(line) && /\d{10,}/.test(line)) {
-                const match = line.match(/([0-9\s-]{12,20})/);
+                const match = line.match(/([0-9OIlSBo०-९\s:-]{12,30})/);
                 if (match) {
-                    const cleaned = match[1].replace(/[\s-]/g, '');
+                    const cleaned = normalizeOcrNumber(match[1]).replace(/\D/g, '');
                     if (cleaned.length === 14) {
                         abhaNumberMatch = match;
                         break;
@@ -90,9 +123,16 @@ export function parseABHAText(text) {
         }
     }
     if (abhaNumberMatch) {
-        const cleaned = abhaNumberMatch[1].replace(/[\s-]/g, '');
+        const cleaned = normalizeOcrNumber(abhaNumberMatch[1]).replace(/\D/g, '');
         if (cleaned.length >= 14) {
             result.abhaNumber = cleaned.slice(0, 14);
+        }
+    }
+
+    if (!result.abhaNumber) {
+        const candidates = collectNumericCandidates(cleanTextNormalizedDigits);
+        if (candidates.length > 0) {
+            result.abhaNumber = candidates[0];
         }
     }
 
@@ -109,19 +149,16 @@ export function parseABHAText(text) {
     }
 
     // Extract Gender - Enhanced patterns
-    let genderMatch = cleanText.match(/(?:Gender|लिंग|SEX)\s*[:：\/]?\s*[^\n]{0,30}?\s*(Male|पुरुष)/i);
+    let genderMatch = cleanText.match(/(?:Gender|लिंग|SEX)\s*[:：\/]?\s*[^\n]{0,30}?\s*(Female|महिला|Male|पुरुष)/i);
     if (!genderMatch) {
-        genderMatch = cleanText.match(/(?:Gender|लिंग|SEX)\s*[:：\/]?\s*[^\n]{0,30}?\s*(Female|महिला)/i);
+        genderMatch = cleanText.match(/\b(Female|महिला|Male|पुरुष)\b/i);
     }
     if (!genderMatch) {
         // Try line-by-line - look for line with Gender keyword
         for (const line of originalLines) {
             if (/(?:Gender|लिंग|SEX)/i.test(line)) {
                 // Look for Male first, then Female (to avoid matching labels)
-                let match = line.match(/(Male|पुरुष)/i);
-                if (!match) {
-                    match = line.match(/(Female|महिला)/i);
-                }
+                const match = line.match(/(Female|महिला|Male|पुरुष)/i);
                 if (match) {
                     genderMatch = match;
                     break;
@@ -133,10 +170,7 @@ export function parseABHAText(text) {
         // Fallback: Look for gender on same line as DOB and Mobile
         for (const line of originalLines) {
             if (/(?:\d{2}[\/-]\d{2}[\/-]\d{4}|\d{10})/.test(line)) {
-                let match = line.match(/(Male|पुरुष)/i);
-                if (!match) {
-                    match = line.match(/(Female|महिला)/i);
-                }
+                const match = line.match(/(Female|महिला|Male|पुरुष)/i);
                 if (match) {
                     genderMatch = match;
                     break;
@@ -211,6 +245,119 @@ export function parseABHAText(text) {
     }
     if (mobileMatch) {
         result.mobile = mobileMatch[1];
+    }
+
+    return result;
+}
+
+/**
+ * Parse ABHA card data from a decoded QR code payload.
+ * Handles JSON payloads (most common), ABDM-signed XML, URL-only, and key=value formats.
+ * Returns the same shape as parseABHAText so the caller can merge the two results.
+ */
+export function parseABHAFromQR(qrData) {
+    const result = {
+        name: null,
+        abhaNumber: null,
+        abhaAddress: null,
+        gender: null,
+        dob: null,
+        mobile: null
+    };
+
+    if (!qrData || typeof qrData !== 'string' || !qrData.trim()) return result;
+
+    const raw = qrData.trim();
+
+    // ── 1. Try JSON parse ─────────────────────────────────────────────────────
+    const tryJSON = (str) => {
+        try { return JSON.parse(str); } catch { return null; }
+    };
+
+    let parsed = null;
+    if (raw.startsWith('{') || raw.startsWith('[')) {
+        parsed = tryJSON(raw);
+    } else {
+        // QR may contain a URL followed by JSON, or JSON embedded in another structure
+        const jsonMatch = raw.match(/(\{[\s\S]*\})/);
+        if (jsonMatch) parsed = tryJSON(jsonMatch[1]);
+    }
+
+    if (parsed && typeof parsed === 'object') {
+        // ABDM / NHA field name variants
+        const pick = (...keys) => {
+            for (const k of keys) {
+                const v = parsed[k] ?? parsed[k.toLowerCase()] ?? parsed[k.toUpperCase()];
+                if (v && String(v).trim()) return String(v).trim();
+            }
+            return null;
+        };
+
+        const rawAbha = pick('hidn', 'healthId', 'abhaNumber', 'ABHA_Number', 'healthIdNumber', 'phr');
+        if (rawAbha) {
+            const digits = rawAbha.replace(/\D/g, '');
+            if (digits.length >= 14) result.abhaNumber = digits.slice(0, 14);
+        }
+
+        result.abhaAddress = pick('hid', 'abhaAddress', 'phrAddress', 'address') || null;
+        if (result.abhaAddress && !result.abhaAddress.includes('@')) result.abhaAddress = null; // must be @abdm/@sbx
+
+        result.name = pick('name', 'Name', 'fullName') || null;
+
+        const g = pick('gender', 'Gender', 'sex');
+        if (g) {
+            const upper = g.toUpperCase();
+            if (upper === 'M' || upper === 'MALE') result.gender = 'Male';
+            else if (upper === 'F' || upper === 'FEMALE') result.gender = 'Female';
+            else if (upper === 'O' || upper === 'OTHER') result.gender = 'Other';
+            else result.gender = g;
+        }
+
+        const dob = pick('dob', 'dateOfBirth', 'DOB', 'birthDate');
+        if (dob) {
+            // Normalize various DOB formats to DD/MM/YYYY
+            const dateMatch = dob.match(/(\d{1,4})[-\/\.](\d{1,2})[-\/\.](\d{1,4})/);
+            if (dateMatch) {
+                const [, p1, p2, p3] = dateMatch;
+                if (p1.length === 4) {
+                    // YYYY-MM-DD
+                    result.dob = `${p2.padStart(2,'0')}/${p3.padStart(2,'0')}/${p1}`;
+                } else {
+                    // DD/MM/YYYY or DD/MM/YY
+                    const year = p3.length === 2 ? `19${p3}` : p3;
+                    result.dob = `${p1.padStart(2,'0')}/${p2.padStart(2,'0')}/${year}`;
+                }
+            }
+        }
+
+        const mob = pick('mobile', 'mobileNumber', 'phone', 'phoneNumber');
+        if (mob) {
+            const digits = mob.replace(/\D/g, '');
+            result.mobile = digits.slice(-10) || null;
+        }
+
+        return result;
+    }
+
+    // ── 2. URL-only payload — extract ABHA number from path segment ────────────
+    const urlAbhaMatch = raw.match(/(?:healthid\.ndhm\.gov\.in|abha\.abdm\.gov\.in)\/([0-9-]{14,17})/i);
+    if (urlAbhaMatch) {
+        const digits = urlAbhaMatch[1].replace(/\D/g, '');
+        if (digits.length >= 14) result.abhaNumber = digits.slice(0, 14);
+    }
+
+    // ── 3. Plain key=value or pipe-delimited ──────────────────────────────────
+    const hidnMatch = raw.match(/hidn[=:\s]+([0-9-]{14,17})/i);
+    if (hidnMatch) {
+        result.abhaNumber = hidnMatch[1].replace(/\D/g, '').slice(0, 14);
+    }
+    const hidMatch = raw.match(/hid[=:\s]+([a-zA-Z0-9._-]+@(?:abdm|sbx))/i);
+    if (hidMatch) result.abhaAddress = hidMatch[1].toLowerCase();
+
+    // Fallback: bare @abdm address anywhere in the string
+    if (!result.abhaAddress) {
+        const addrFallback = raw.match(/([a-zA-Z0-9._-]+@(?:abdm|sbx))/i);
+        if (addrFallback) result.abhaAddress = addrFallback[1].toLowerCase();
     }
 
     return result;

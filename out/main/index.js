@@ -1733,6 +1733,28 @@ async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
   console.log("🎯 E-SHRAM ENHANCED PARSER");
   console.log("=".repeat(60));
   let parsedData = parseEShramText(text);
+  const qualityFields = [
+    "name",
+    "fatherName",
+    "dob",
+    "gender",
+    "uan",
+    "occupation",
+    "address",
+    "contactNumber"
+  ];
+  const hasSufficientData = () => {
+    const filled = qualityFields.filter((field) => {
+      const value = parsedData[field];
+      return typeof value === "string" ? value.trim().length > 0 : Boolean(value);
+    }).length;
+    return filled >= 5;
+  };
+  if (hasSufficientData()) {
+    console.log("✅ Base extraction quality is already sufficient, skipping extra enhancement passes.");
+    console.log("=".repeat(60) + "\n");
+    return parsedData;
+  }
   const nameIsIncomplete = !parsedData.name || parsedData.name.length < 3 || parsedData.name === "N/A";
   if (nameIsIncomplete && frontPath && outputDir) {
     try {
@@ -1775,6 +1797,11 @@ async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
       }
     } catch (err) {
       console.warn("⚠️ Name region OCR failed:", err.message);
+    }
+    if (hasSufficientData()) {
+      console.log("✅ Extraction reached quality threshold after name enhancement.");
+      console.log("=".repeat(60) + "\n");
+      return parsedData;
     }
   }
   if (!parsedData.occupation && frontPath && outputDir) {
@@ -1854,6 +1881,11 @@ async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
     } catch (err) {
       console.warn("⚠️ Enhanced occupation OCR failed:", err.message);
     }
+    if (hasSufficientData()) {
+      console.log("✅ Extraction reached quality threshold after occupation enhancement.");
+      console.log("=".repeat(60) + "\n");
+      return parsedData;
+    }
   }
   if (!parsedData.fatherName && frontPath && outputDir) {
     try {
@@ -1886,6 +1918,11 @@ async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
     } catch (err) {
       console.warn("⚠️ Father name region OCR failed:", err.message);
     }
+    if (hasSufficientData()) {
+      console.log("✅ Extraction reached quality threshold after father-name enhancement.");
+      console.log("=".repeat(60) + "\n");
+      return parsedData;
+    }
   }
   if (!parsedData.dob && frontPath && outputDir) {
     try {
@@ -1893,7 +1930,7 @@ async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
       const fImgForDob = await jimp.Jimp.read(frontPath);
       const dobBox = {
         x: Math.floor(fImgForDob.bitmap.width * 0),
-        y: Math.floor(fImgForDob.bitmap.width * 0.35),
+        y: Math.floor(fImgForDob.bitmap.height * 0.35),
         w: Math.floor(fImgForDob.bitmap.width * 1),
         h: Math.floor(fImgForDob.bitmap.height * 0.25)
       };
@@ -1918,6 +1955,11 @@ async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
       }
     } catch (err) {
       console.warn("⚠️ DOB region OCR failed:", err.message);
+    }
+    if (hasSufficientData()) {
+      console.log("✅ Extraction reached quality threshold after DOB enhancement.");
+      console.log("=".repeat(60) + "\n");
+      return parsedData;
     }
   }
   if (!parsedData.gender && frontPath && outputDir) {
@@ -1946,6 +1988,11 @@ async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
       }
     } catch (err) {
       console.warn("⚠️ Gender region OCR failed:", err.message);
+    }
+    if (hasSufficientData()) {
+      console.log("✅ Extraction reached quality threshold after gender enhancement.");
+      console.log("=".repeat(60) + "\n");
+      return parsedData;
     }
   }
   if (!parsedData.bloodGroup && frontPath && outputDir) {
@@ -1979,6 +2026,11 @@ async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
       }
     } catch (err) {
       console.warn("⚠️ Blood group region OCR failed:", err.message);
+    }
+    if (hasSufficientData()) {
+      console.log("✅ Extraction reached quality threshold after blood-group enhancement.");
+      console.log("=".repeat(60) + "\n");
+      return parsedData;
     }
   }
   if (!parsedData.contactNumber && frontPath && outputDir) {
@@ -2067,13 +2119,39 @@ function parseABHAText(text) {
     mobile: null
   };
   if (!text) return result;
+  const devanagariDigitMap = {
+    "०": "0",
+    "१": "1",
+    "२": "2",
+    "३": "3",
+    "४": "4",
+    "५": "5",
+    "६": "6",
+    "७": "7",
+    "८": "8",
+    "९": "9"
+  };
+  const normalizeDigits = (value) => value.replace(/[०-९]/g, (digit) => devanagariDigitMap[digit] || digit);
+  const normalizeOcrNumber = (value) => normalizeDigits(value).replace(/[Oo]/g, "0").replace(/[Il|]/g, "1").replace(/S/g, "5").replace(/B/g, "8");
+  const collectNumericCandidates = (value) => {
+    const candidates = [];
+    const matches = value.match(/[0-9OIlSBo०-९][0-9OIlSBo०-९\s:-]{12,30}/g) || [];
+    for (const raw of matches) {
+      const normalized = normalizeOcrNumber(raw).replace(/\D/g, "");
+      if (normalized.length >= 14) {
+        candidates.push(normalized.slice(0, 14));
+      }
+    }
+    return candidates;
+  };
   const cleanText = text.replace(/[\r\n]+/g, "\n").replace(/\s+/g, " ").trim();
+  const cleanTextNormalizedDigits = normalizeDigits(cleanText);
   const originalLines = text.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean);
   let nameMatch = cleanText.match(/(?:Name|नाम|NAME)\s*[:：]?\s*([A-Za-z][A-Za-z\s]{2,50})(?=\s*(?:नाम|ABHA|आभा|Gender|लिंग|Mobile|$))/i);
   if (!nameMatch) {
     for (const line of originalLines) {
       if (/(?:Name|नाम|NAME)/i.test(line)) {
-        const match = line.match(/(?:Name|नाम|NAME)\s*[:：]?\s*([A-Za-z][A-Za-z\s]+)/i);
+        const match = line.match(/(?:Name|नाम|NAME)\s*[:：]?\s*([A-Za-z\u0900-\u097F][A-Za-z\u0900-\u097F\s]+)/i);
         if (match) {
           nameMatch = match;
           break;
@@ -2091,6 +2169,11 @@ function parseABHAText(text) {
         nameMatch = namePattern;
         break;
       }
+      const hindiNamePattern = line.match(/^([\u0900-\u097F]{2,}(?:\s+[\u0900-\u097F]{2,}){1,3})/);
+      if (hindiNamePattern && hindiNamePattern[1].length > 3) {
+        nameMatch = hindiNamePattern;
+        break;
+      }
     }
   }
   if (nameMatch) {
@@ -2098,16 +2181,16 @@ function parseABHAText(text) {
     name = name.replace(/\s+[A-Z][a-z]{0,2}$/, "");
     result.name = name;
   }
-  let abhaNumberMatch = cleanText.match(/(?:ABHA\s*(?:Number|No\.?|Card\s*Number)|आभा\s*(?:नंबर|संख्या))\s*[:：]?\s*([0-9\s-]{12,20})/i);
+  let abhaNumberMatch = cleanTextNormalizedDigits.match(/(?:ABHA\s*(?:Number|No\.?|Card\s*Number)|आभा\s*(?:नंबर|संख्या))\s*[:：]?\s*([0-9OIlSBo\s-]{12,24})/i);
   if (!abhaNumberMatch) {
-    abhaNumberMatch = cleanText.match(/(?:^|\s)([0-9]{2}[\s-]?[0-9]{4}[\s-]?[0-9]{4}[\s-]?[0-9]{4})(?:\s|$)/);
+    abhaNumberMatch = cleanTextNormalizedDigits.match(/(?:^|\s)([0-9OIlSBo]{2}[\s-:]?[0-9OIlSBo]{4}[\s-:]?[0-9OIlSBo]{4}[\s-:]?[0-9OIlSBo]{4})(?:\s|$)/);
   }
   if (!abhaNumberMatch) {
     for (const line of originalLines) {
       if (/(?:ABHA|आभा|Health\s*ID)/i.test(line) && /\d{10,}/.test(line)) {
-        const match = line.match(/([0-9\s-]{12,20})/);
+        const match = line.match(/([0-9OIlSBo०-९\s:-]{12,30})/);
         if (match) {
-          const cleaned = match[1].replace(/[\s-]/g, "");
+          const cleaned = normalizeOcrNumber(match[1]).replace(/\D/g, "");
           if (cleaned.length === 14) {
             abhaNumberMatch = match;
             break;
@@ -2117,9 +2200,15 @@ function parseABHAText(text) {
     }
   }
   if (abhaNumberMatch) {
-    const cleaned = abhaNumberMatch[1].replace(/[\s-]/g, "");
+    const cleaned = normalizeOcrNumber(abhaNumberMatch[1]).replace(/\D/g, "");
     if (cleaned.length >= 14) {
       result.abhaNumber = cleaned.slice(0, 14);
+    }
+  }
+  if (!result.abhaNumber) {
+    const candidates = collectNumericCandidates(cleanTextNormalizedDigits);
+    if (candidates.length > 0) {
+      result.abhaNumber = candidates[0];
     }
   }
   const abhaAddressMatch = cleanText.match(/(?:ABHA\s*Address|आभा\s*पता|Address)\s*[:：]?\s*([a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+)/i);
@@ -2131,17 +2220,14 @@ function parseABHAText(text) {
       result.abhaAddress = addressFallback[1].toLowerCase();
     }
   }
-  let genderMatch = cleanText.match(/(?:Gender|लिंग|SEX)\s*[:：\/]?\s*[^\n]{0,30}?\s*(Male|पुरुष)/i);
+  let genderMatch = cleanText.match(/(?:Gender|लिंग|SEX)\s*[:：\/]?\s*[^\n]{0,30}?\s*(Female|महिला|Male|पुरुष)/i);
   if (!genderMatch) {
-    genderMatch = cleanText.match(/(?:Gender|लिंग|SEX)\s*[:：\/]?\s*[^\n]{0,30}?\s*(Female|महिला)/i);
+    genderMatch = cleanText.match(/\b(Female|महिला|Male|पुरुष)\b/i);
   }
   if (!genderMatch) {
     for (const line of originalLines) {
       if (/(?:Gender|लिंग|SEX)/i.test(line)) {
-        let match = line.match(/(Male|पुरुष)/i);
-        if (!match) {
-          match = line.match(/(Female|महिला)/i);
-        }
+        const match = line.match(/(Female|महिला|Male|पुरुष)/i);
         if (match) {
           genderMatch = match;
           break;
@@ -2152,10 +2238,7 @@ function parseABHAText(text) {
   if (!genderMatch) {
     for (const line of originalLines) {
       if (/(?:\d{2}[\/-]\d{2}[\/-]\d{4}|\d{10})/.test(line)) {
-        let match = line.match(/(Male|पुरुष)/i);
-        if (!match) {
-          match = line.match(/(Female|महिला)/i);
-        }
+        const match = line.match(/(Female|महिला|Male|पुरुष)/i);
         if (match) {
           genderMatch = match;
           break;
@@ -2217,6 +2300,92 @@ function parseABHAText(text) {
   }
   if (mobileMatch) {
     result.mobile = mobileMatch[1];
+  }
+  return result;
+}
+function parseABHAFromQR(qrData) {
+  const result = {
+    name: null,
+    abhaNumber: null,
+    abhaAddress: null,
+    gender: null,
+    dob: null,
+    mobile: null
+  };
+  if (!qrData || typeof qrData !== "string" || !qrData.trim()) return result;
+  const raw = qrData.trim();
+  const tryJSON = (str) => {
+    try {
+      return JSON.parse(str);
+    } catch {
+      return null;
+    }
+  };
+  let parsed = null;
+  if (raw.startsWith("{") || raw.startsWith("[")) {
+    parsed = tryJSON(raw);
+  } else {
+    const jsonMatch = raw.match(/(\{[\s\S]*\})/);
+    if (jsonMatch) parsed = tryJSON(jsonMatch[1]);
+  }
+  if (parsed && typeof parsed === "object") {
+    const pick = (...keys) => {
+      for (const k of keys) {
+        const v = parsed[k] ?? parsed[k.toLowerCase()] ?? parsed[k.toUpperCase()];
+        if (v && String(v).trim()) return String(v).trim();
+      }
+      return null;
+    };
+    const rawAbha = pick("hidn", "healthId", "abhaNumber", "ABHA_Number", "healthIdNumber", "phr");
+    if (rawAbha) {
+      const digits = rawAbha.replace(/\D/g, "");
+      if (digits.length >= 14) result.abhaNumber = digits.slice(0, 14);
+    }
+    result.abhaAddress = pick("hid", "abhaAddress", "phrAddress", "address") || null;
+    if (result.abhaAddress && !result.abhaAddress.includes("@")) result.abhaAddress = null;
+    result.name = pick("name", "Name", "fullName") || null;
+    const g = pick("gender", "Gender", "sex");
+    if (g) {
+      const upper = g.toUpperCase();
+      if (upper === "M" || upper === "MALE") result.gender = "Male";
+      else if (upper === "F" || upper === "FEMALE") result.gender = "Female";
+      else if (upper === "O" || upper === "OTHER") result.gender = "Other";
+      else result.gender = g;
+    }
+    const dob = pick("dob", "dateOfBirth", "DOB", "birthDate");
+    if (dob) {
+      const dateMatch = dob.match(/(\d{1,4})[-\/\.](\d{1,2})[-\/\.](\d{1,4})/);
+      if (dateMatch) {
+        const [, p1, p2, p3] = dateMatch;
+        if (p1.length === 4) {
+          result.dob = `${p2.padStart(2, "0")}/${p3.padStart(2, "0")}/${p1}`;
+        } else {
+          const year = p3.length === 2 ? `19${p3}` : p3;
+          result.dob = `${p1.padStart(2, "0")}/${p2.padStart(2, "0")}/${year}`;
+        }
+      }
+    }
+    const mob = pick("mobile", "mobileNumber", "phone", "phoneNumber");
+    if (mob) {
+      const digits = mob.replace(/\D/g, "");
+      result.mobile = digits.slice(-10) || null;
+    }
+    return result;
+  }
+  const urlAbhaMatch = raw.match(/(?:healthid\.ndhm\.gov\.in|abha\.abdm\.gov\.in)\/([0-9-]{14,17})/i);
+  if (urlAbhaMatch) {
+    const digits = urlAbhaMatch[1].replace(/\D/g, "");
+    if (digits.length >= 14) result.abhaNumber = digits.slice(0, 14);
+  }
+  const hidnMatch = raw.match(/hidn[=:\s]+([0-9-]{14,17})/i);
+  if (hidnMatch) {
+    result.abhaNumber = hidnMatch[1].replace(/\D/g, "").slice(0, 14);
+  }
+  const hidMatch = raw.match(/hid[=:\s]+([a-zA-Z0-9._-]+@(?:abdm|sbx))/i);
+  if (hidMatch) result.abhaAddress = hidMatch[1].toLowerCase();
+  if (!result.abhaAddress) {
+    const addrFallback = raw.match(/([a-zA-Z0-9._-]+@(?:abdm|sbx))/i);
+    if (addrFallback) result.abhaAddress = addrFallback[1].toLowerCase();
   }
   return result;
 }
@@ -2903,6 +3072,18 @@ function formatDate(dateStr) {
   const year = match[3];
   return `${year}-${month}-${day}`;
 }
+function makeBinary(img, threshold) {
+  img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
+    const val = this.bitmap.data[idx] > threshold ? 255 : 0;
+    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
+  });
+  return img;
+}
+const SHARPEN_KERNEL = [
+  [0, -1, 0],
+  [-1, 5, -1],
+  [0, -1, 0]
+];
 async function decodeQRImage(imagePath) {
   try {
     console.log("🔍 Decoding QR from cropped image:", imagePath);
@@ -2911,15 +3092,19 @@ async function decodeQRImage(imagePath) {
       return null;
     }
     let image = await jimp.Jimp.read(imagePath);
+    const cropMinSide = Math.min(image.bitmap.width, image.bitmap.height);
+    const cropScale = cropMinSide > 0 ? Math.min(4, Math.max(1, Math.round(600 / cropMinSide))) : 2;
+    const cropHiScale = Math.min(cropScale + 1, 4);
     const strategies = [
       { name: "original", process: (img) => img },
-      { name: "2x-upscale", process: (img) => img.scale(2) },
-      { name: "3x-upscale", process: (img) => img.scale(3) },
-      { name: "4x-upscale", process: (img) => img.scale(4) },
-      { name: "5x-upscale", process: (img) => img.scale(5) },
-      { name: "3x-greyscale-contrast", process: (img) => img.scale(3).greyscale().contrast(0.5) },
-      { name: "4x-greyscale-contrast", process: (img) => img.scale(4).greyscale().contrast(0.7) },
-      { name: "5x-greyscale-contrast", process: (img) => img.scale(5).greyscale().contrast(1) }
+      { name: "grey-contrast", process: (img) => img.greyscale().contrast(0.5).normalize() },
+      { name: "sx-upscale", process: (img) => img.scale(cropScale) },
+      { name: "sx-grey-contrast", process: (img) => img.scale(cropScale).greyscale().contrast(0.7) },
+      { name: "sx-sharpen-grey", process: (img) => img.scale(cropScale).greyscale().convolute(SHARPEN_KERNEL).normalize() },
+      { name: "sx-sharpen-binary-128", process: (img) => makeBinary(img.scale(cropScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 128) },
+      { name: "hx-grey-hi-contrast", process: (img) => img.scale(cropHiScale).greyscale().contrast(1).normalize() },
+      { name: "hx-sharpen-binary-128", process: (img) => makeBinary(img.scale(cropHiScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 128) },
+      { name: "hx-sharpen-binary-100", process: (img) => makeBinary(img.scale(cropHiScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 100) }
     ];
     for (const strategy of strategies) {
       console.log(`  Trying decode strategy: ${strategy.name}...`);
@@ -3049,106 +3234,24 @@ async function detectQRCode(imagePath) {
     let image = await jimp.Jimp.read(imagePath);
     const originalWidth = image.bitmap.width;
     const originalHeight = image.bitmap.height;
+    const minSide = Math.min(originalWidth, originalHeight);
+    const smartScale = minSide > 0 ? Math.min(5, Math.max(1, Math.round(1200 / minSide))) : 2;
+    const hiScale = Math.min(smartScale + 1, 5);
     const strategies = [
       { name: "original", process: (img) => img },
-      // Ultra-high upscaling for small QR codes
-      { name: "10x-ultra", process: (img) => img.scale(10).greyscale().contrast(1).normalize() },
-      { name: "12x-extreme", process: (img) => img.scale(12).greyscale().contrast(1).normalize() },
-      { name: "15x-maximum", process: (img) => img.scale(15).greyscale().contrast(1).normalize() },
-      // High upscaling with sharpening
-      { name: "8x-ultra", process: (img) => img.scale(8).greyscale().contrast(1).normalize() },
-      { name: "7x-sharp", process: (img) => img.scale(7).greyscale().contrast(1).normalize() },
-      { name: "6x-sharp", process: (img) => img.scale(6).contrast(1).normalize() },
-      { name: "5x-sharp", process: (img) => img.scale(5).contrast(1).normalize() },
-      { name: "4x-sharp", process: (img) => img.scale(4).contrast(0.9).normalize() },
-      // Extreme binary thresholds for high contrast
-      { name: "10x-binary-128", process: (img) => {
-        img = img.scale(10).greyscale();
-        img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
-          const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-          this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-        });
-        return img;
-      } },
-      { name: "12x-binary-128", process: (img) => {
-        img = img.scale(12).greyscale();
-        img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
-          const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-          this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-        });
-        return img;
-      } },
-      { name: "8x-binary-128", process: (img) => {
-        img = img.scale(8).greyscale();
-        img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
-          const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-          this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-        });
-        return img;
-      } },
-      // Binary threshold at different levels (with blur to reduce noise)
-      { name: "5x-blur-binary-100", process: (img) => {
-        img = img.scale(5).greyscale().blur(1);
-        img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
-          const val = this.bitmap.data[idx] > 100 ? 255 : 0;
-          this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-        });
-        return img;
-      } },
-      { name: "5x-blur-binary-128", process: (img) => {
-        img = img.scale(5).greyscale().blur(1);
-        img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
-          const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-          this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-        });
-        return img;
-      } },
-      { name: "5x-blur-binary-150", process: (img) => {
-        img = img.scale(5).greyscale().blur(1);
-        img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
-          const val = this.bitmap.data[idx] > 150 ? 255 : 0;
-          this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-        });
-        return img;
-      } },
-      { name: "6x-blur-binary-128", process: (img) => {
-        img = img.scale(6).greyscale().blur(1);
-        img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
-          const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-          this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-        });
-        return img;
-      } },
-      // Inverted (white QR on black background)
-      { name: "10x-inverted", process: (img) => img.scale(10).greyscale().invert().contrast(1) },
-      { name: "8x-inverted", process: (img) => img.scale(8).greyscale().invert().contrast(1) },
-      { name: "6x-inverted", process: (img) => img.scale(6).greyscale().invert().contrast(1) },
-      { name: "5x-inverted", process: (img) => img.scale(5).greyscale().invert().contrast(1) },
-      // Brightness adjustments for light/dark QR codes
-      { name: "10x-bright", process: (img) => img.scale(10).greyscale().brightness(0.2).contrast(1) },
-      { name: "10x-dark", process: (img) => img.scale(10).greyscale().brightness(-0.2).contrast(1) },
-      { name: "8x-bright", process: (img) => img.scale(8).greyscale().brightness(0.3).contrast(1) },
-      { name: "8x-dark", process: (img) => img.scale(8).greyscale().brightness(-0.3).contrast(1) },
-      // Binary without blur (sharper edges)
-      { name: "6x-binary-120", process: (img) => {
-        img = img.scale(6).greyscale();
-        img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
-          const val = this.bitmap.data[idx] > 120 ? 255 : 0;
-          this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-        });
-        return img;
-      } },
-      { name: "7x-binary-128", process: (img) => {
-        img = img.scale(7).greyscale();
-        img.scan(0, 0, img.bitmap.width, img.bitmap.height, function(x, y, idx) {
-          const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-          this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-        });
-        return img;
-      } },
-      // Adaptive: High contrast + greyscale
-      { name: "5x-adaptive", process: (img) => img.scale(5).greyscale().normalize().contrast(0.8) },
-      { name: "6x-adaptive", process: (img) => img.scale(6).greyscale().normalize().contrast(0.9) }
+      { name: "grey-contrast-norm", process: (img) => img.greyscale().contrast(0.7).normalize() },
+      { name: "sx-grey-hi-contrast", process: (img) => img.scale(smartScale).greyscale().contrast(1).normalize() },
+      { name: "sx-binary-100", process: (img) => makeBinary(img.scale(smartScale).greyscale(), 100) },
+      { name: "sx-binary-128", process: (img) => makeBinary(img.scale(smartScale).greyscale(), 128) },
+      { name: "sx-binary-150", process: (img) => makeBinary(img.scale(smartScale).greyscale(), 150) },
+      { name: "sx-sharpen-grey", process: (img) => img.scale(smartScale).greyscale().convolute(SHARPEN_KERNEL).normalize() },
+      { name: "sx-sharpen-binary-128", process: (img) => makeBinary(img.scale(smartScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 128) },
+      { name: "sx-blur-binary", process: (img) => makeBinary(img.scale(smartScale).greyscale().blur(1), 128) },
+      { name: "sx-inverted", process: (img) => img.scale(smartScale).greyscale().invert().contrast(0.9) },
+      { name: "hx-grey-hi-contrast", process: (img) => img.scale(hiScale).greyscale().contrast(1).normalize() },
+      { name: "hx-binary-128", process: (img) => makeBinary(img.scale(hiScale).greyscale(), 128) },
+      { name: "hx-sharpen-binary-128", process: (img) => makeBinary(img.scale(hiScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 128) },
+      { name: "hx-sharpen-binary-100", process: (img) => makeBinary(img.scale(hiScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 100) }
     ];
     for (const strategy of strategies) {
       console.log(`  Trying strategy: ${strategy.name}...`);
@@ -3325,6 +3428,12 @@ async function extractQRRegion(imagePath, outputPath) {
       w: qrBox.width,
       h: qrBox.height
     });
+    const minQrSide = 600;
+    const currentMinSide = Math.min(qr.bitmap.width, qr.bitmap.height);
+    if (currentMinSide > 0 && currentMinSide < minQrSide) {
+      qr.scale(minQrSide / currentMinSide);
+    }
+    qr.greyscale().convolute(SHARPEN_KERNEL).contrast(0.5).normalize();
     await qr.write(outputPath);
     console.log("✅ QR code saved to:", outputPath);
     return {
@@ -3338,6 +3447,35 @@ async function extractQRRegion(imagePath, outputPath) {
 }
 function getBaseDir() {
   return global.__imagesBaseDir || process.cwd();
+}
+function buildDetectedImagePath(outputDir, documentId) {
+  const fileName = `asset-${documentId}-${Date.now()}.png`;
+  return {
+    absolutePath: path.join(outputDir, fileName),
+    relativePath: `/images/${documentId}/${fileName}`
+  };
+}
+function applyFixedAadhaarImageSelection(imagePaths, result, imageObject) {
+  if (!Array.isArray(imagePaths) || imagePaths.length === 0) return;
+  const qrImagePath = imagePaths[0] || null;
+  const faceImagePath = imagePaths[7] || null;
+  imageObject.qrImage = qrImagePath;
+  imageObject.faceImage = faceImagePath;
+  result.structured.aadhaarFixedImageSelection = {
+    qrSourceIndex: 1,
+    qrImagePath,
+    faceSourceIndex: 8,
+    faceImagePath,
+    availableImageCount: imagePaths.length
+  };
+  if (qrImagePath) {
+    result.structured.qrDetected = qrImagePath;
+    console.log("   ✓ Aadhaar fixed QR image mapped from image 1");
+  }
+  if (faceImagePath) {
+    result.structured.faceDetected = faceImagePath;
+    console.log("   ✓ Aadhaar fixed face image mapped from image 8");
+  }
 }
 const DOCUMENT_CONFIG = {
   AADHAAR: {
@@ -3500,6 +3638,19 @@ async function handleImageBasedPDF(jobData, config) {
   console.log("-".repeat(60));
   const outputDir = path.join(getBaseDir(), "images", docId);
   await performSmartDetection(result, config, outputDir, docId, documentType);
+  if (documentType === "ABHA" && result.structured.qrData) {
+    console.log("\n🔗 ABHA: merging QR data into extracted fields...");
+    const qrFields = parseABHAFromQR(result.structured.qrData);
+    let merged = 0;
+    for (const [key, value] of Object.entries(qrFields)) {
+      if (value && !result.structured[key]) {
+        result.structured[key] = value;
+        merged++;
+        console.log(`   ✅ QR filled missing field "${key}": ${String(value).substring(0, 60)}`);
+      }
+    }
+    if (merged === 0) console.log("   ℹ️  All ABHA fields already populated from OCR.");
+  }
   console.log("\n📦 Building Response Structure...");
   const imageObject = buildImageObject(result);
   console.log("\n💾 Saving to Database...");
@@ -3574,6 +3725,9 @@ ${ocrText}` : ocrText;
     await performSmartDetection(result, config, docOutputDir, docId, documentType);
   }
   Object.assign(imageObject, buildImageObject(result));
+  if (documentType === "AADHAAR") {
+    applyFixedAadhaarImageSelection(imagePaths, result, imageObject);
+  }
   console.log("\n💾 Saving to Database...");
   console.log("   Images:", imagePaths.length);
   console.log("   Text Length:", finalText.length);
@@ -3584,35 +3738,16 @@ ${ocrText}` : ocrText;
     structured: result.structured
   });
 }
-function toAbsoluteImagePath(relativePath) {
-  if (!relativePath) return null;
-  return path.join(getBaseDir(), relativePath.replace(/^\//, ""));
-}
-async function ensureNamedImage(result, outputDir, documentId, sourceRelativePath, targetFilename, targetStructuredKey) {
-  if (!sourceRelativePath) return false;
-  const sourceAbs = toAbsoluteImagePath(sourceRelativePath);
-  const targetAbs = path.join(outputDir, targetFilename);
-  if (!sourceAbs || !fs$1.existsSync(sourceAbs)) return false;
-  try {
-    if (path.resolve(sourceAbs) !== path.resolve(targetAbs)) {
-      await fs$1.promises.copyFile(sourceAbs, targetAbs);
-    }
-    result.structured[targetStructuredKey] = `/images/${documentId}/${targetFilename}`;
-    return true;
-  } catch (err) {
-    console.warn(`   ⚠️  Could not normalize ${targetFilename}:`, err.message);
-    return false;
-  }
-}
 async function performSmartDetection(result, config, outputDir, documentId, documentType) {
   if (config.hasPhoto) {
     console.log("\n👤 Step 1: Photo Detection (JS)");
     const imagePath = documentType === "E-SHRAM" && result.structured.frontCardPath ? path.join(getBaseDir(), result.structured.frontCardPath.replace(/^\//, "")) : path.join(getBaseDir(), result.structured.cardImagePath.replace(/^\//, ""));
-    const faceOutputPath = path.join(outputDir, "face.png");
+    const faceAsset = buildDetectedImagePath(outputDir, documentId);
+    const faceOutputPath = faceAsset.absolutePath;
     try {
       const faceSuccess = await extractFaceRegion(imagePath, faceOutputPath);
       if (faceSuccess && fs$1.existsSync(faceOutputPath)) {
-        result.structured.faceDetected = `/images/${documentId}/face.png`;
+        result.structured.faceDetected = faceAsset.relativePath;
         console.log("   ✅ Face region extracted");
       } else {
         console.log("   ⚠️  Face region not found, coordinate-based fallback will be used");
@@ -3620,40 +3755,37 @@ async function performSmartDetection(result, config, outputDir, documentId, docu
     } catch (err) {
       console.warn("   ⚠️  Face detection failed:", err.message);
     }
-    if (!result.structured.faceDetected) {
-      const fallbackFacePath = result.structured.face || result.structured.photo || result.structured.photoDetected;
-      const normalized = await ensureNamedImage(result, outputDir, documentId, fallbackFacePath, "face.png", "faceDetected");
-      if (normalized) {
-        console.log("   ✓ Normalized fallback face image → face.png");
-      }
-    }
   } else {
     console.log("\n👤 Step 1: Photo Detection → Skipped (not applicable)");
   }
   if (config.hasQR) {
     console.log("\n📱 Step 2: QR Code Detection (JS / jsQR)");
-    const scanImagePath = documentType === "E-SHRAM" && result.structured.backCardPath ? path.join(getBaseDir(), result.structured.backCardPath.replace(/^\//, "")) : path.join(getBaseDir(), result.structured.cardImagePath.replace(/^\//, ""));
-    const qrOutputPath = path.join(outputDir, "qr.png");
-    try {
-      const qrSuccess = await extractQRRegion(scanImagePath, qrOutputPath);
-      if (qrSuccess && fs$1.existsSync(qrOutputPath)) {
-        result.structured.qrDetected = `/images/${documentId}/qr.png`;
-        console.log("   ✅ QR region extracted");
-        const decoded = await decodeQRImage(qrOutputPath);
-        if (decoded) {
-          result.structured.qrData = decoded;
-          console.log(`   📊 QR decoded: ${decoded.length} characters`);
+    if (result.structured.qrData && result.structured.qrData.toString().trim()) {
+      console.log("   ✅ QR data already available from parser, skipping redundant QR detection");
+    } else {
+      const scanImagePath = documentType === "E-SHRAM" && result.structured.backCardPath ? path.join(getBaseDir(), result.structured.backCardPath.replace(/^\//, "")) : path.join(getBaseDir(), result.structured.cardImagePath.replace(/^\//, ""));
+      const qrAsset = buildDetectedImagePath(outputDir, documentId);
+      const qrOutputPath = qrAsset.absolutePath;
+      let decoded = null;
+      let qrFoundByJs = false;
+      try {
+        const qrSuccess = await extractQRRegion(scanImagePath, qrOutputPath);
+        if (qrSuccess && fs$1.existsSync(qrOutputPath)) {
+          qrFoundByJs = true;
+          result.structured.qrDetected = qrAsset.relativePath;
+          console.log("   ✅ QR region extracted");
+          decoded = qrSuccess.data && qrSuccess.data.trim() ? qrSuccess.data : await decodeQRImage(qrOutputPath);
+          if (decoded) {
+            result.structured.qrData = decoded;
+            console.log(`   📊 QR decoded: ${decoded.length} characters`);
+          } else {
+            console.log("   ⚠️  QR region found but could not decode data");
+          }
+        } else {
+          console.log("   ⚠️  QR region not found");
         }
-      } else {
-        console.log("   ⚠️  QR region not found");
-      }
-    } catch (err) {
-      console.warn("   ⚠️  QR detection failed:", err.message);
-    }
-    if (!result.structured.qrDetected && result.structured.qr) {
-      const normalized = await ensureNamedImage(result, outputDir, documentId, result.structured.qr, "qr.png", "qrDetected");
-      if (normalized) {
-        console.log("   ✓ Normalized fallback QR image → qr.png");
+      } catch (err) {
+        console.warn("   ⚠️  QR detection failed:", err.message);
       }
     }
   } else {
@@ -3662,23 +3794,18 @@ async function performSmartDetection(result, config, outputDir, documentId, docu
   if (config.hasSignature) {
     console.log("\n✍️  Step 3: Signature Detection (JS)");
     const sigSourcePath = documentType === "E-SHRAM" && result.structured.frontCardPath ? path.join(getBaseDir(), result.structured.frontCardPath.replace(/^\//, "")) : path.join(getBaseDir(), result.structured.cardImagePath.replace(/^\//, ""));
-    const sigOutputPath = path.join(outputDir, "signature.png");
+    const signatureAsset = buildDetectedImagePath(outputDir, documentId);
+    const sigOutputPath = signatureAsset.absolutePath;
     try {
       const sigSuccess = await extractSignatureRegion(sigSourcePath, sigOutputPath);
       if (sigSuccess && fs$1.existsSync(sigOutputPath)) {
-        result.structured.signatureDetected = `/images/${documentId}/signature.png`;
+        result.structured.signatureDetected = signatureAsset.relativePath;
         console.log("   ✅ Signature region extracted");
       } else {
         console.log("   ⚠️  Signature region not found, coordinate-based fallback will be used");
       }
     } catch (err) {
       console.warn("   ⚠️  Signature detection failed:", err.message);
-    }
-    if (!result.structured.signatureDetected && result.structured.signature) {
-      const normalized = await ensureNamedImage(result, outputDir, documentId, result.structured.signature, "signature.png", "signatureDetected");
-      if (normalized) {
-        console.log("   ✓ Normalized fallback signature image → signature.png");
-      }
     }
   } else {
     console.log("\n✍️  Step 3: Signature Detection → Skipped (not applicable)");

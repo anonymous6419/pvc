@@ -8,6 +8,26 @@ import jsQR from 'jsqr';
 import { Jimp } from 'jimp';
 import fs from 'fs';
 
+// ── Shared image-processing helpers ──────────────────────────────────────────
+
+/**
+ * Binarize a greyscale Jimp image in-place: pixels above threshold → 255, else 0.
+ */
+function makeBinary(img, threshold) {
+    img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
+        const val = this.bitmap.data[idx] > threshold ? 255 : 0;
+        this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
+    });
+    return img;
+}
+
+/** Laplacian sharpen kernel — enhances edges, helps blurry QR modules snap to black/white. */
+const SHARPEN_KERNEL = [
+    [0, -1,  0],
+    [-1,  5, -1],
+    [0, -1,  0]
+];
+
 /**
  * Decode QR code from an already-cropped QR image
  * Applies aggressive preprocessing to decode small/low-quality QR codes
@@ -25,16 +45,21 @@ export async function decodeQRImage(imagePath) {
         
         let image = await Jimp.read(imagePath);
         
-        // Try aggressive preprocessing strategies for small QR codes
+        // Smart scale for QR crops: aim for ~600 px short side, cap at 4x.
+        const cropMinSide  = Math.min(image.bitmap.width, image.bitmap.height);
+        const cropScale    = cropMinSide > 0 ? Math.min(4, Math.max(1, Math.round(600 / cropMinSide))) : 2;
+        const cropHiScale  = Math.min(cropScale + 1, 4);
+
         const strategies = [
-            { name: 'original', process: (img) => img },
-            { name: '2x-upscale', process: (img) => img.scale(2) },
-            { name: '3x-upscale', process: (img) => img.scale(3) },
-            { name: '4x-upscale', process: (img) => img.scale(4) },
-            { name: '5x-upscale', process: (img) => img.scale(5) },
-            { name: '3x-greyscale-contrast', process: (img) => img.scale(3).greyscale().contrast(0.5) },
-            { name: '4x-greyscale-contrast', process: (img) => img.scale(4).greyscale().contrast(0.7) },
-            { name: '5x-greyscale-contrast', process: (img) => img.scale(5).greyscale().contrast(1.0) }
+            { name: 'original',              process: (img) => img },
+            { name: 'grey-contrast',         process: (img) => img.greyscale().contrast(0.5).normalize() },
+            { name: 'sx-upscale',            process: (img) => img.scale(cropScale) },
+            { name: 'sx-grey-contrast',      process: (img) => img.scale(cropScale).greyscale().contrast(0.7) },
+            { name: 'sx-sharpen-grey',       process: (img) => img.scale(cropScale).greyscale().convolute(SHARPEN_KERNEL).normalize() },
+            { name: 'sx-sharpen-binary-128', process: (img) => makeBinary(img.scale(cropScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 128) },
+            { name: 'hx-grey-hi-contrast',   process: (img) => img.scale(cropHiScale).greyscale().contrast(1.0).normalize() },
+            { name: 'hx-sharpen-binary-128', process: (img) => makeBinary(img.scale(cropHiScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 128) },
+            { name: 'hx-sharpen-binary-100', process: (img) => makeBinary(img.scale(cropHiScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 100) },
         ];
         
         for (const strategy of strategies) {
@@ -236,115 +261,27 @@ export async function detectQRCode(imagePath) {
         const originalWidth = image.bitmap.width;
         const originalHeight = image.bitmap.height;
         
-        // ULTRA-AGGRESSIVE preprocessing strategies for difficult QR codes
+        // Smart scale: bring the short side up to ~1200 px, cap at 5x.
+        // Avoids creating huge intermediary images (e.g. 2400px×10 = 24000px = ~2.7B pixels).
+        const minSide = Math.min(originalWidth, originalHeight);
+        const smartScale = minSide > 0 ? Math.min(5, Math.max(1, Math.round(1200 / minSide))) : 2;
+        const hiScale   = Math.min(smartScale + 1, 5);
+
         const strategies = [
-            { name: 'original', process: (img) => img },
-            
-            // Ultra-high upscaling for small QR codes
-            { name: '10x-ultra', process: (img) => img.scale(10).greyscale().contrast(1.0).normalize() },
-            { name: '12x-extreme', process: (img) => img.scale(12).greyscale().contrast(1.0).normalize() },
-            { name: '15x-maximum', process: (img) => img.scale(15).greyscale().contrast(1.0).normalize() },
-            
-            // High upscaling with sharpening
-            { name: '8x-ultra', process: (img) => img.scale(8).greyscale().contrast(1.0).normalize() },
-            { name: '7x-sharp', process: (img) => img.scale(7).greyscale().contrast(1.0).normalize() },
-            { name: '6x-sharp', process: (img) => img.scale(6).contrast(1.0).normalize() },
-            { name: '5x-sharp', process: (img) => img.scale(5).contrast(1.0).normalize() },
-            { name: '4x-sharp', process: (img) => img.scale(4).contrast(0.9).normalize() },
-            
-            // Extreme binary thresholds for high contrast
-            { name: '10x-binary-128', process: (img) => {
-                img = img.scale(10).greyscale();
-                img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
-                    const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-                    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-                });
-                return img;
-            }},
-            { name: '12x-binary-128', process: (img) => {
-                img = img.scale(12).greyscale();
-                img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
-                    const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-                    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-                });
-                return img;
-            }},
-            { name: '8x-binary-128', process: (img) => {
-                img = img.scale(8).greyscale();
-                img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
-                    const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-                    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-                });
-                return img;
-            }},
-            
-            // Binary threshold at different levels (with blur to reduce noise)
-            { name: '5x-blur-binary-100', process: (img) => {
-                img = img.scale(5).greyscale().blur(1);
-                img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
-                    const val = this.bitmap.data[idx] > 100 ? 255 : 0;
-                    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-                });
-                return img;
-            }},
-            { name: '5x-blur-binary-128', process: (img) => {
-                img = img.scale(5).greyscale().blur(1);
-                img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
-                    const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-                    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-                });
-                return img;
-            }},
-            { name: '5x-blur-binary-150', process: (img) => {
-                img = img.scale(5).greyscale().blur(1);
-                img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
-                    const val = this.bitmap.data[idx] > 150 ? 255 : 0;
-                    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-                });
-                return img;
-            }},
-            { name: '6x-blur-binary-128', process: (img) => {
-                img = img.scale(6).greyscale().blur(1);
-                img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
-                    const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-                    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-                });
-                return img;
-            }},
-            
-            // Inverted (white QR on black background)
-            { name: '10x-inverted', process: (img) => img.scale(10).greyscale().invert().contrast(1.0) },
-            { name: '8x-inverted', process: (img) => img.scale(8).greyscale().invert().contrast(1.0) },
-            { name: '6x-inverted', process: (img) => img.scale(6).greyscale().invert().contrast(1.0) },
-            { name: '5x-inverted', process: (img) => img.scale(5).greyscale().invert().contrast(1.0) },
-            
-            // Brightness adjustments for light/dark QR codes
-            { name: '10x-bright', process: (img) => img.scale(10).greyscale().brightness(0.2).contrast(1.0) },
-            { name: '10x-dark', process: (img) => img.scale(10).greyscale().brightness(-0.2).contrast(1.0) },
-            { name: '8x-bright', process: (img) => img.scale(8).greyscale().brightness(0.3).contrast(1.0) },
-            { name: '8x-dark', process: (img) => img.scale(8).greyscale().brightness(-0.3).contrast(1.0) },
-            
-            // Binary without blur (sharper edges)
-            { name: '6x-binary-120', process: (img) => {
-                img = img.scale(6).greyscale();
-                img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
-                    const val = this.bitmap.data[idx] > 120 ? 255 : 0;
-                    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-                });
-                return img;
-            }},
-            { name: '7x-binary-128', process: (img) => {
-                img = img.scale(7).greyscale();
-                img.scan(0, 0, img.bitmap.width, img.bitmap.height, function (x, y, idx) {
-                    const val = this.bitmap.data[idx] > 128 ? 255 : 0;
-                    this.bitmap.data[idx] = this.bitmap.data[idx + 1] = this.bitmap.data[idx + 2] = val;
-                });
-                return img;
-            }},
-            
-            // Adaptive: High contrast + greyscale
-            { name: '5x-adaptive', process: (img) => img.scale(5).greyscale().normalize().contrast(0.8) },
-            { name: '6x-adaptive', process: (img) => img.scale(6).greyscale().normalize().contrast(0.9) }
+            { name: 'original',              process: (img) => img },
+            { name: 'grey-contrast-norm',    process: (img) => img.greyscale().contrast(0.7).normalize() },
+            { name: 'sx-grey-hi-contrast',   process: (img) => img.scale(smartScale).greyscale().contrast(1.0).normalize() },
+            { name: 'sx-binary-100',         process: (img) => makeBinary(img.scale(smartScale).greyscale(), 100) },
+            { name: 'sx-binary-128',         process: (img) => makeBinary(img.scale(smartScale).greyscale(), 128) },
+            { name: 'sx-binary-150',         process: (img) => makeBinary(img.scale(smartScale).greyscale(), 150) },
+            { name: 'sx-sharpen-grey',       process: (img) => img.scale(smartScale).greyscale().convolute(SHARPEN_KERNEL).normalize() },
+            { name: 'sx-sharpen-binary-128', process: (img) => makeBinary(img.scale(smartScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 128) },
+            { name: 'sx-blur-binary',        process: (img) => makeBinary(img.scale(smartScale).greyscale().blur(1), 128) },
+            { name: 'sx-inverted',           process: (img) => img.scale(smartScale).greyscale().invert().contrast(0.9) },
+            { name: 'hx-grey-hi-contrast',   process: (img) => img.scale(hiScale).greyscale().contrast(1.0).normalize() },
+            { name: 'hx-binary-128',         process: (img) => makeBinary(img.scale(hiScale).greyscale(), 128) },
+            { name: 'hx-sharpen-binary-128', process: (img) => makeBinary(img.scale(hiScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 128) },
+            { name: 'hx-sharpen-binary-100', process: (img) => makeBinary(img.scale(hiScale).greyscale().convolute(SHARPEN_KERNEL).normalize(), 100) },
         ];
         
         for (const strategy of strategies) {
@@ -614,6 +551,15 @@ export async function extractQRRegion(imagePath, outputPath) {
             w: qrBox.width,
             h: qrBox.height
         });
+
+        // Keep QR crops readable: enforce a practical minimum size, sharpen, and boost contrast.
+        const minQrSide = 600;
+        const currentMinSide = Math.min(qr.bitmap.width, qr.bitmap.height);
+        if (currentMinSide > 0 && currentMinSide < minQrSide) {
+            qr.scale(minQrSide / currentMinSide);
+        }
+
+        qr.greyscale().convolute(SHARPEN_KERNEL).contrast(0.5).normalize();
         
         await qr.write(outputPath);
         console.log('✅ QR code saved to:', outputPath);

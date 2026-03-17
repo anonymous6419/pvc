@@ -14,6 +14,31 @@ export async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
     
     // Parse main text
     let parsedData = parseEShramText(text);
+
+    const qualityFields = [
+        'name',
+        'fatherName',
+        'dob',
+        'gender',
+        'uan',
+        'occupation',
+        'address',
+        'contactNumber'
+    ];
+
+    const hasSufficientData = () => {
+        const filled = qualityFields.filter((field) => {
+            const value = parsedData[field];
+            return typeof value === 'string' ? value.trim().length > 0 : Boolean(value);
+        }).length;
+        return filled >= 5;
+    };
+
+    if (hasSufficientData()) {
+        console.log('✅ Base extraction quality is already sufficient, skipping extra enhancement passes.');
+        console.log('='.repeat(60) + '\n');
+        return parsedData;
+    }
     
     // If name looks incomplete (too short or clearly truncated) and region data available, try enhanced OCR
     const nameIsIncomplete = !parsedData.name || parsedData.name.length < 3 || parsedData.name === 'N/A';
@@ -73,6 +98,12 @@ export async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
             }
         } catch (err) {
             console.warn("⚠️ Name region OCR failed:", err.message);
+        }
+
+        if (hasSufficientData()) {
+            console.log('✅ Extraction reached quality threshold after name enhancement.');
+            console.log('='.repeat(60) + '\n');
+            return parsedData;
         }
     }
     
@@ -157,6 +188,12 @@ export async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
         } catch (err) {
             console.warn("⚠️ Enhanced occupation OCR failed:", err.message);
         }
+
+        if (hasSufficientData()) {
+            console.log('✅ Extraction reached quality threshold after occupation enhancement.');
+            console.log('='.repeat(60) + '\n');
+            return parsedData;
+        }
     }
     
     // If father name is missing and we have front card image
@@ -201,6 +238,12 @@ export async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
         } catch (err) {
             console.warn("⚠️ Father name region OCR failed:", err.message);
         }
+
+        if (hasSufficientData()) {
+            console.log('✅ Extraction reached quality threshold after father-name enhancement.');
+            console.log('='.repeat(60) + '\n');
+            return parsedData;
+        }
     }
     
     // If DOB is missing and we have front card image
@@ -212,7 +255,7 @@ export async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
             // Extract middle section where DOB typically appears
             const dobBox = {
                 x: Math.floor(fImgForDob.bitmap.width * 0.0),
-                y: Math.floor(fImgForDob.bitmap.width * 0.35),
+                y: Math.floor(fImgForDob.bitmap.height * 0.35),
                 w: Math.floor(fImgForDob.bitmap.width * 1.0),
                 h: Math.floor(fImgForDob.bitmap.height * 0.25)
             };
@@ -247,6 +290,12 @@ export async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
             }
         } catch (err) {
             console.warn("⚠️ DOB region OCR failed:", err.message);
+        }
+
+        if (hasSufficientData()) {
+            console.log('✅ Extraction reached quality threshold after DOB enhancement.');
+            console.log('='.repeat(60) + '\n');
+            return parsedData;
         }
     }
     
@@ -287,6 +336,12 @@ export async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
             }
         } catch (err) {
             console.warn("⚠️ Gender region OCR failed:", err.message);
+        }
+
+        if (hasSufficientData()) {
+            console.log('✅ Extraction reached quality threshold after gender enhancement.');
+            console.log('='.repeat(60) + '\n');
+            return parsedData;
         }
     }
     
@@ -334,6 +389,12 @@ export async function parseEShramEnhanced(text, { frontPath, outputDir } = {}) {
             }
         } catch (err) {
             console.warn("⚠️ Blood group region OCR failed:", err.message);
+        }
+
+        if (hasSufficientData()) {
+            console.log('✅ Extraction reached quality threshold after blood-group enhancement.');
+            console.log('='.repeat(60) + '\n');
+            return parsedData;
         }
     }
     

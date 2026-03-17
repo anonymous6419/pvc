@@ -10,12 +10,48 @@ import { parsePanText } from '../utils/panParser.js';
 import { parseAyushmanText } from '../utils/ayushmanParser.js';
 import { parseElectionText } from '../utils/electionParser.js';
 import { parseEShramEnhanced } from '../utils/eshramEnhancedParser.js';
-import { parseABHAText } from '../utils/aabhaParser.js';
+import { parseABHAText, parseABHAFromQR } from '../utils/aabhaParser.js';
 import { parseDrivingLicenceText } from '../utils/drivingLicenceParser.js';
 import { extractFaceRegion, extractQRRegion, extractSignatureRegion, decodeQRImage } from '../utils/imageDetection.js';
 
 function getBaseDir() {
   return global.__imagesBaseDir || process.cwd()
+}
+
+function buildDetectedImagePath(outputDir, documentId) {
+  const fileName = `asset-${documentId}-${Date.now()}.png`
+  return {
+    absolutePath: path.join(outputDir, fileName),
+    relativePath: `/images/${documentId}/${fileName}`
+  }
+}
+
+function applyFixedAadhaarImageSelection(imagePaths, result, imageObject) {
+  if (!Array.isArray(imagePaths) || imagePaths.length === 0) return
+
+  const qrImagePath = imagePaths[0] || null
+  const faceImagePath = imagePaths[7] || null
+
+  imageObject.qrImage = qrImagePath
+  imageObject.faceImage = faceImagePath
+
+  result.structured.aadhaarFixedImageSelection = {
+    qrSourceIndex: 1,
+    qrImagePath,
+    faceSourceIndex: 8,
+    faceImagePath,
+    availableImageCount: imagePaths.length
+  }
+
+  if (qrImagePath) {
+    result.structured.qrDetected = qrImagePath
+    console.log('   ✓ Aadhaar fixed QR image mapped from image 1')
+  }
+
+  if (faceImagePath) {
+    result.structured.faceDetected = faceImagePath
+    console.log('   ✓ Aadhaar fixed face image mapped from image 8')
+  }
 }
 
 /* ======================================================
@@ -121,11 +157,11 @@ export const processPDF = async ({ documentId, filePath, password, useOCR, docum
   console.log(`🚀 STARTING PROCESSING: ${documentId}`);
   console.log(`📄 Document Type: ${documentType}`);
   console.log(`📁 File Path: ${filePath}`);
-  
+
   // Force OCR for E-Shram as it has poor PDF text quality
   const forceOCR = documentType === 'E-SHRAM';
   const actualUseOCR = forceOCR || useOCR;
-  
+
   console.log(`🔤 OCR Enabled: ${actualUseOCR} ${forceOCR ? '(forced for E-SHRAM)' : ''}`);
   console.log('='.repeat(60) + '\n');
 
@@ -140,10 +176,10 @@ export const processPDF = async ({ documentId, filePath, password, useOCR, docum
     if (!config) {
       throw new Error(`Unsupported document type: ${documentType}`);
     }
-    
+
     // Check if document is image-based
     const isImagePDF = config?.forceImagePipeline || await isImageBasedPDF(filePath, password);
-    
+
     if (isImagePDF) {
       console.log(`✅ ${documentType} is IMAGE-BASED → Using specialized pipeline\n`);
       await handleImageBasedPDF({ documentId, filePath, password, useOCR: actualUseOCR, documentType }, config);
@@ -177,7 +213,7 @@ export const processPDF = async ({ documentId, filePath, password, useOCR, docum
 async function handleImageBasedPDF(jobData, config) {
   const { documentId, filePath, password, documentType } = jobData;
   const docId = documentId.toString(); // Convert ObjectId to string
-  
+
   console.log(`⚙️  Config: ${documentType} → ${config.enableSplitting ? 'Front/Back split + ' : ''}${config.ocrLanguages} OCR`);
 
   // Process PDF to images
@@ -197,6 +233,21 @@ async function handleImageBasedPDF(jobData, config) {
 
   const outputDir = path.join(getBaseDir(), 'images', docId);
   await performSmartDetection(result, config, outputDir, docId, documentType);
+
+  // Post-process: for ABHA cards merge any fields the QR decoded that OCR missed
+  if (documentType === 'ABHA' && result.structured.qrData) {
+    console.log('\n🔗 ABHA: merging QR data into extracted fields...');
+    const qrFields = parseABHAFromQR(result.structured.qrData);
+    let merged = 0;
+    for (const [key, value] of Object.entries(qrFields)) {
+      if (value && !result.structured[key]) {
+        result.structured[key] = value;
+        merged++;
+        console.log(`   ✅ QR filled missing field "${key}": ${String(value).substring(0, 60)}`);
+      }
+    }
+    if (merged === 0) console.log('   ℹ️  All ABHA fields already populated from OCR.');
+  }
 
   // Build response
   console.log('\n📦 Building Response Structure...');
@@ -250,7 +301,7 @@ async function handleTextBasedPDF(jobData, config) {
   console.log('-'.repeat(60) + '\n');
 
   console.log(`⚙️  Parser: ${documentType}`);
-  
+
   // Prepare parser options based on document type
   let parserOptions = {};
   if (documentType === 'E-SHRAM' && imagePaths.length > 0) {
@@ -260,9 +311,9 @@ async function handleTextBasedPDF(jobData, config) {
       outputDir: docOutputDir
     };
   }
-  
+
   const structuredFields = config?.parser ? await config.parser(finalText, parserOptions) : {};
-  
+
   console.log(`   ✓ Parsed ${Object.keys(structuredFields).length} field(s)`);
   if (Object.keys(structuredFields).length > 0) {
     console.log('   Fields:', Object.keys(structuredFields).join(', '));
@@ -291,6 +342,10 @@ async function handleTextBasedPDF(jobData, config) {
 
   Object.assign(imageObject, buildImageObject(result, config));
 
+  if (documentType === 'AADHAAR') {
+    applyFixedAadhaarImageSelection(imagePaths, result, imageObject)
+  }
+
   console.log('\n💾 Saving to Database...');
   console.log('   Images:', imagePaths.length);
   console.log('   Text Length:', finalText.length);
@@ -301,31 +356,6 @@ async function handleTextBasedPDF(jobData, config) {
     images: [imageObject],
     structured: result.structured
   });
-}
-
-function toAbsoluteImagePath(relativePath) {
-  if (!relativePath) return null;
-  return path.join(getBaseDir(), relativePath.replace(/^\//, ''));
-}
-
-async function ensureNamedImage(result, outputDir, documentId, sourceRelativePath, targetFilename, targetStructuredKey) {
-  if (!sourceRelativePath) return false;
-
-  const sourceAbs = toAbsoluteImagePath(sourceRelativePath);
-  const targetAbs = path.join(outputDir, targetFilename);
-  if (!sourceAbs || !fs.existsSync(sourceAbs)) return false;
-
-  try {
-    // Avoid self-copy when source is already canonical
-    if (path.resolve(sourceAbs) !== path.resolve(targetAbs)) {
-      await fs.promises.copyFile(sourceAbs, targetAbs);
-    }
-    result.structured[targetStructuredKey] = `/images/${documentId}/${targetFilename}`;
-    return true;
-  } catch (err) {
-    console.warn(`   ⚠️  Could not normalize ${targetFilename}:`, err.message);
-    return false;
-  }
 }
 
 /* ======================================================
@@ -340,11 +370,12 @@ async function performSmartDetection(result, config, outputDir, documentId, docu
       ? path.join(getBaseDir(), result.structured.frontCardPath.replace(/^\//, ''))
       : path.join(getBaseDir(), result.structured.cardImagePath.replace(/^\//, ''));
 
-    const faceOutputPath = path.join(outputDir, 'face.png');
+    const faceAsset = buildDetectedImagePath(outputDir, documentId);
+    const faceOutputPath = faceAsset.absolutePath;
     try {
       const faceSuccess = await extractFaceRegion(imagePath, faceOutputPath);
       if (faceSuccess && fs.existsSync(faceOutputPath)) {
-        result.structured.faceDetected = `/images/${documentId}/face.png`;
+        result.structured.faceDetected = faceAsset.relativePath;
         console.log('   ✅ Face region extracted');
       } else {
         console.log('   ⚠️  Face region not found, coordinate-based fallback will be used');
@@ -353,14 +384,6 @@ async function performSmartDetection(result, config, outputDir, documentId, docu
       console.warn('   ⚠️  Face detection failed:', err.message);
     }
 
-    // Fallback normalization: if parser/coordinate extraction produced a face/photo image
-    if (!result.structured.faceDetected) {
-      const fallbackFacePath = result.structured.face || result.structured.photo || result.structured.photoDetected;
-      const normalized = await ensureNamedImage(result, outputDir, documentId, fallbackFacePath, 'face.png', 'faceDetected');
-      if (normalized) {
-        console.log('   ✓ Normalized fallback face image → face.png');
-      }
-    }
   } else {
     console.log('\n👤 Step 1: Photo Detection → Skipped (not applicable)');
   }
@@ -369,35 +392,39 @@ async function performSmartDetection(result, config, outputDir, documentId, docu
   if (config.hasQR) {
     console.log('\n📱 Step 2: QR Code Detection (JS / jsQR)');
 
-    const scanImagePath = documentType === 'E-SHRAM' && result.structured.backCardPath
-      ? path.join(getBaseDir(), result.structured.backCardPath.replace(/^\//, ''))
-      : path.join(getBaseDir(), result.structured.cardImagePath.replace(/^\//, ''));
+    if (result.structured.qrData && result.structured.qrData.toString().trim()) {
+      console.log('   ✅ QR data already available from parser, skipping redundant QR detection');
+    } else {
+      const scanImagePath = documentType === 'E-SHRAM' && result.structured.backCardPath
+        ? path.join(getBaseDir(), result.structured.backCardPath.replace(/^\//, ''))
+        : path.join(getBaseDir(), result.structured.cardImagePath.replace(/^\//, ''));
 
-    const qrOutputPath = path.join(outputDir, 'qr.png');
-    try {
-      const qrSuccess = await extractQRRegion(scanImagePath, qrOutputPath);
-      if (qrSuccess && fs.existsSync(qrOutputPath)) {
-        result.structured.qrDetected = `/images/${documentId}/qr.png`;
-        console.log('   ✅ QR region extracted');
+      const qrAsset = buildDetectedImagePath(outputDir, documentId);
+      const qrOutputPath = qrAsset.absolutePath;
+      let decoded = null;
+      let qrFoundByJs = false;
+      try {
+        const qrSuccess = await extractQRRegion(scanImagePath, qrOutputPath);
+        if (qrSuccess && fs.existsSync(qrOutputPath)) {
+          qrFoundByJs = true;
+          result.structured.qrDetected = qrAsset.relativePath;
+          console.log('   ✅ QR region extracted');
 
-        const decoded = await decodeQRImage(qrOutputPath);
-        if (decoded) {
-          result.structured.qrData = decoded;
-          console.log(`   📊 QR decoded: ${decoded.length} characters`);
+          // Prefer already-decoded data from detection; only re-scan the saved crop as fallback
+          decoded = (qrSuccess.data && qrSuccess.data.trim()) ? qrSuccess.data : await decodeQRImage(qrOutputPath);
+          if (decoded) {
+            result.structured.qrData = decoded;
+            console.log(`   📊 QR decoded: ${decoded.length} characters`);
+          } else {
+            console.log('   ⚠️  QR region found but could not decode data');
+          }
+        } else {
+          console.log('   ⚠️  QR region not found');
         }
-      } else {
-        console.log('   ⚠️  QR region not found');
+      } catch (err) {
+        console.warn('   ⚠️  QR detection failed:', err.message);
       }
-    } catch (err) {
-      console.warn('   ⚠️  QR detection failed:', err.message);
-    }
 
-    // Fallback normalization: if parser/coordinate extraction produced a QR image
-    if (!result.structured.qrDetected && result.structured.qr) {
-      const normalized = await ensureNamedImage(result, outputDir, documentId, result.structured.qr, 'qr.png', 'qrDetected');
-      if (normalized) {
-        console.log('   ✓ Normalized fallback QR image → qr.png');
-      }
     }
   } else {
     console.log('\n📱 Step 2: QR Code Detection → Skipped (not applicable)');
@@ -411,11 +438,12 @@ async function performSmartDetection(result, config, outputDir, documentId, docu
       ? path.join(getBaseDir(), result.structured.frontCardPath.replace(/^\//, ''))
       : path.join(getBaseDir(), result.structured.cardImagePath.replace(/^\//, ''));
 
-    const sigOutputPath = path.join(outputDir, 'signature.png');
+    const signatureAsset = buildDetectedImagePath(outputDir, documentId);
+    const sigOutputPath = signatureAsset.absolutePath;
     try {
       const sigSuccess = await extractSignatureRegion(sigSourcePath, sigOutputPath);
       if (sigSuccess && fs.existsSync(sigOutputPath)) {
-        result.structured.signatureDetected = `/images/${documentId}/signature.png`;
+        result.structured.signatureDetected = signatureAsset.relativePath;
         console.log('   ✅ Signature region extracted');
       } else {
         console.log('   ⚠️  Signature region not found, coordinate-based fallback will be used');
@@ -424,13 +452,6 @@ async function performSmartDetection(result, config, outputDir, documentId, docu
       console.warn('   ⚠️  Signature detection failed:', err.message);
     }
 
-    // Fallback normalization: if parser/coordinate extraction produced a signature image
-    if (!result.structured.signatureDetected && result.structured.signature) {
-      const normalized = await ensureNamedImage(result, outputDir, documentId, result.structured.signature, 'signature.png', 'signatureDetected');
-      if (normalized) {
-        console.log('   ✓ Normalized fallback signature image → signature.png');
-      }
-    }
   } else {
     console.log('\n✍️  Step 3: Signature Detection → Skipped (not applicable)');
   }
