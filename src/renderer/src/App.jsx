@@ -22,13 +22,45 @@ const TYPE_TO_ENUM = {
 }
 
 function FieldRow({ label, value }) {
-  if (!value) return null
+  const displayValue = formatDisplayValue(value)
+  if (!displayValue) return null
   return (
     <div className="field-row">
       <label>{label}</label>
-      <span>{value}</span>
+      <span>{displayValue}</span>
     </div>
   )
+}
+
+function formatDisplayValue(value) {
+  if (value === null || value === undefined) return ''
+
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(formatDisplayValue).filter(Boolean).join(', ')
+  }
+
+  if (typeof value === 'object') {
+    const parts = Object.values(value).map(formatDisplayValue).filter(Boolean)
+    if (parts.length > 0) {
+      return parts.join(', ')
+    }
+
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return ''
+    }
+  }
+
+  return ''
 }
 
 function ImageCard({ label, dataUrl }) {
@@ -429,14 +461,16 @@ export default function App() {
           s.panNumber ||
           s.epicNumber ||
           s.dlNumber ||
+          s.licenseNumber ||
           s.abhaNumber ||
           s.eshramNumber ||
           s.beneficiaryId ||
           '',
         dateOfBirth: s.dob || s.dateOfBirth || '',
         gender: s.gender || '',
-        address: s.address || '',
+        address: formatDisplayValue(s.address),
         qrText: s.qrData || '',
+        details: s,
         sourceFileName: selectedFile?.fileName || ''
       })
       await loadHistory()
@@ -542,7 +576,7 @@ export default function App() {
               <FieldRow label="Aadhaar No." value={structured.aadhaarNumber} />
               <FieldRow label="PAN No." value={structured.panNumber} />
               <FieldRow label="EPIC No." value={structured.epicNumber} />
-              <FieldRow label="DL No." value={structured.dlNumber} />
+              <FieldRow label="DL No." value={structured.dlNumber || structured.licenseNumber} />
               <FieldRow label="ABHA No." value={structured.abhaNumber} />
               <FieldRow label="E-Shram No." value={structured.eshramNumber} />
               <FieldRow label="Beneficiary ID" value={structured.beneficiaryId} />
