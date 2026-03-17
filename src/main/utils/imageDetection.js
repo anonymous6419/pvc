@@ -505,6 +505,32 @@ function calculateStrokeDensity(jimpImage) {
 }
 
 /**
+ * Remove white/light background from signature image, keeping only the ink.
+ * Converts white/light pixels to transparency.
+ * @param {Jimp} image - Jimp image instance
+ * @param {number} whiteThreshold - Pixel value above this = white/background (default 220)
+ * @returns {Jimp} - Image with transparent background
+ */
+function removeSignatureBackground(image, whiteThreshold = 220) {
+    const alpha = Jimp.ALPHA_CHANNEL;
+    
+    image.scan(0, 0, image.bitmap.width, image.bitmap.height, function (x, y, idx) {
+        // Calculate brightness: average of R, G, B
+        const r = this.bitmap.data[idx];
+        const g = this.bitmap.data[idx + 1];
+        const b = this.bitmap.data[idx + 2];
+        const brightness = (r + g + b) / 3;
+        
+        // If pixel is white/light (background), make it transparent
+        if (brightness > whiteThreshold) {
+            this.bitmap.data[idx + 3] = 0; // Set alpha to 0 (transparent)
+        }
+    });
+    
+    return image;
+}
+
+/**
  * Extract signature from image using automatic detection.
  * @param {string} imagePath - Source image path
  * @param {string} outputPath - Where to save extracted signature
@@ -522,6 +548,9 @@ export async function extractSignatureRegion(imagePath, outputPath) {
             w: sigBox.width,
             h: sigBox.height
         });
+
+        // Remove white background, keeping only signature ink
+        removeSignatureBackground(sig);
 
         await sig.write(outputPath);
         console.log('✅ Signature saved to:', outputPath);

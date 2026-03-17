@@ -3398,6 +3398,19 @@ function calculateStrokeDensity(jimpImage) {
   }
   return darkPixels / totalPixels;
 }
+function removeSignatureBackground(image, whiteThreshold = 220) {
+  jimp.Jimp.ALPHA_CHANNEL;
+  image.scan(0, 0, image.bitmap.width, image.bitmap.height, function(x, y, idx) {
+    const r = this.bitmap.data[idx];
+    const g = this.bitmap.data[idx + 1];
+    const b = this.bitmap.data[idx + 2];
+    const brightness = (r + g + b) / 3;
+    if (brightness > whiteThreshold) {
+      this.bitmap.data[idx + 3] = 0;
+    }
+  });
+  return image;
+}
 async function extractSignatureRegion(imagePath, outputPath) {
   try {
     const sigBox = await detectSignatureRegion(imagePath);
@@ -3409,6 +3422,7 @@ async function extractSignatureRegion(imagePath, outputPath) {
       w: sigBox.width,
       h: sigBox.height
     });
+    removeSignatureBackground(sig);
     await sig.write(outputPath);
     console.log("✅ Signature saved to:", outputPath);
     return outputPath;
@@ -3475,6 +3489,54 @@ function applyFixedAadhaarImageSelection(imagePaths, result, imageObject) {
   if (faceImagePath) {
     result.structured.faceDetected = faceImagePath;
     console.log("   ✓ Aadhaar fixed face image mapped from image 8");
+  }
+}
+function applyFixedPanImageSelection(imagePaths, result, imageObject) {
+  if (!Array.isArray(imagePaths) || imagePaths.length === 0) return;
+  const cardImagePath = imagePaths[6] || null;
+  const qrImagePath = imagePaths[7] || null;
+  const faceImagePath = imagePaths[8] || null;
+  const signatureImagePath = imagePaths[9] || imagePaths[2] || null;
+  if (cardImagePath) {
+    result.structured.cardImagePath = cardImagePath;
+    imageObject.cardImage = cardImagePath;
+  }
+  if (qrImagePath) {
+    imageObject.qrImage = qrImagePath;
+    result.structured.qrDetected = qrImagePath;
+  }
+  if (faceImagePath) {
+    imageObject.faceImage = faceImagePath;
+    result.structured.faceDetected = faceImagePath;
+  }
+  if (signatureImagePath) {
+    imageObject.signatureImage = signatureImagePath;
+    result.structured.signatureDetected = signatureImagePath;
+  }
+  result.structured.panFixedImageSelection = {
+    cardSourceIndex: cardImagePath ? 7 : null,
+    cardImagePath,
+    qrSourceIndex: qrImagePath ? 8 : null,
+    qrImagePath,
+    faceSourceIndex: faceImagePath ? 9 : null,
+    faceImagePath,
+    signatureSourceIndex: signatureImagePath === imagePaths[9] ? 10 : signatureImagePath ? 3 : null,
+    signatureImagePath,
+    availableImageCount: imagePaths.length
+  };
+  if (cardImagePath) {
+    console.log("   ✓ PAN fixed card image mapped from image 7");
+  }
+  if (qrImagePath) {
+    console.log("   ✓ PAN fixed QR image mapped from image 8");
+  }
+  if (faceImagePath) {
+    console.log("   ✓ PAN fixed face image mapped from image 9");
+  }
+  if (signatureImagePath === imagePaths[9]) {
+    console.log("   ✓ PAN fixed signature image mapped from image 10");
+  } else if (signatureImagePath === imagePaths[2]) {
+    console.log("   ✓ PAN fixed signature image mapped from image 3");
   }
 }
 const DOCUMENT_CONFIG = {
@@ -3727,6 +3789,9 @@ ${ocrText}` : ocrText;
   Object.assign(imageObject, buildImageObject(result));
   if (documentType === "AADHAAR") {
     applyFixedAadhaarImageSelection(imagePaths, result, imageObject);
+  }
+  if (documentType === "PAN") {
+    applyFixedPanImageSelection(imagePaths, result, imageObject);
   }
   console.log("\n💾 Saving to Database...");
   console.log("   Images:", imagePaths.length);
