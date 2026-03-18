@@ -3541,10 +3541,22 @@ function applyFixedPanImageSelection(imagePaths, result, imageObject) {
 }
 function applyLicenseImageSelection(imagePaths, result, imageObject) {
   if (!Array.isArray(imagePaths) || imagePaths.length === 0) return;
-  const cardImagePath = imagePaths[6] || null;
-  const qrImagePath = imagePaths[7] || null;
-  const faceImagePath = imagePaths[8] || null;
-  const signatureImagePath = imagePaths[5] || null;
+  const pickImageByPriority = (priority) => {
+    for (const index of priority) {
+      if (index >= 0 && index < imagePaths.length && imagePaths[index]) {
+        return { path: imagePaths[index], index };
+      }
+    }
+    return { path: null, index: null };
+  };
+  const cardPick = pickImageByPriority([0, 6]);
+  const facePick = pickImageByPriority([2, 3, 8]);
+  const signaturePick = pickImageByPriority([4, 5, 9, 2]);
+  const qrPick = pickImageByPriority([5, 6, 7]);
+  const cardImagePath = cardPick.path;
+  const qrImagePath = qrPick.path;
+  const faceImagePath = facePick.path;
+  const signatureImagePath = signaturePick.path;
   if (cardImagePath) {
     result.structured.cardImagePath = cardImagePath;
     imageObject.cardImage = cardImagePath;
@@ -3562,29 +3574,51 @@ function applyLicenseImageSelection(imagePaths, result, imageObject) {
     result.structured.signatureDetected = signatureImagePath;
   }
   result.structured.drivingLicenceFixedImageSelection = {
-    cardSourceIndex: cardImagePath ? 7 : null,
+    cardSourceIndex: cardPick.index !== null ? cardPick.index + 1 : null,
     cardImagePath,
-    qrSourceIndex: qrImagePath ? 8 : null,
+    qrSourceIndex: qrPick.index !== null ? qrPick.index + 1 : null,
     qrImagePath,
-    faceSourceIndex: faceImagePath ? 9 : null,
+    faceSourceIndex: facePick.index !== null ? facePick.index + 1 : null,
     faceImagePath,
-    signatureSourceIndex: signatureImagePath ? 6 : null,
+    signatureSourceIndex: signaturePick.index !== null ? signaturePick.index + 1 : null,
     signatureImagePath,
     availableImageCount: imagePaths.length
   };
   if (cardImagePath) {
-    console.log("   ✓ License fixed card image mapped from image 7");
+    console.log(`   ✓ License fixed card image mapped from image ${cardPick.index + 1}`);
   }
   if (qrImagePath) {
-    console.log("   ✓ License fixed QR image mapped from image 8");
+    console.log(`   ✓ License fixed QR image mapped from image ${qrPick.index + 1}`);
   }
   if (faceImagePath) {
-    console.log("   ✓ License fixed face image mapped from image 9");
+    console.log(`   ✓ License fixed face image mapped from image ${facePick.index + 1}`);
   }
-  if (signatureImagePath === imagePaths[9]) {
-    console.log("   ✓ License fixed signature image mapped from image 10");
-  } else if (signatureImagePath === imagePaths[2]) {
-    console.log("   ✓ License fixed signature image mapped from image 3");
+  if (signatureImagePath) {
+    console.log(`   ✓ License fixed signature image mapped from image ${signaturePick.index + 1}`);
+  }
+}
+async function removeSignatureBackgroundFromPath(signatureImagePath, outputDir, documentId) {
+  if (!signatureImagePath) return null;
+  try {
+    const sourcePath = path.join(getBaseDir(), signatureImagePath.replace(/^\//, ""));
+    if (!fs$1.existsSync(sourcePath)) return null;
+    const image = await jimp.Jimp.read(sourcePath);
+    image.scan(0, 0, image.bitmap.width, image.bitmap.height, function(_x, _y, idx) {
+      const r = this.bitmap.data[idx];
+      const g = this.bitmap.data[idx + 1];
+      const b = this.bitmap.data[idx + 2];
+      const brightness = (r + g + b) / 3;
+      if (brightness > 220) {
+        this.bitmap.data[idx + 3] = 0;
+      }
+    });
+    const cleanedFileName = `asset-${documentId}-${Date.now()}-signature-clean.png`;
+    const cleanedAbsolutePath = path.join(outputDir, cleanedFileName);
+    await image.write(cleanedAbsolutePath);
+    return `/images/${documentId}/${cleanedFileName}`;
+  } catch (error) {
+    console.warn("   ⚠️  Could not remove signature background:", error.message);
+    return null;
   }
 }
 const DOCUMENT_CONFIG = {
@@ -3843,6 +3877,20 @@ ${ocrText}` : ocrText;
   }
   if (documentType === "DRIVING_LICENCE") {
     applyLicenseImageSelection(imagePaths, result, imageObject);
+    const cleanedSignaturePath = await removeSignatureBackgroundFromPath(
+      result.structured.signatureDetected,
+      docOutputDir,
+      docId
+    );
+    if (cleanedSignaturePath) {
+      result.structured.signatureDetected = cleanedSignaturePath;
+      imageObject.signatureImage = cleanedSignaturePath;
+      if (result.structured.drivingLicenceFixedImageSelection) {
+        result.structured.drivingLicenceFixedImageSelection.signatureImagePath = cleanedSignaturePath;
+        result.structured.drivingLicenceFixedImageSelection.cleanedSignatureImagePath = cleanedSignaturePath;
+      }
+      console.log("   ✓ Signature background removed and mapped to cleaned path");
+    }
   }
   console.log("\n💾 Saving to Database...");
   console.log("   Images:", imagePaths.length);
